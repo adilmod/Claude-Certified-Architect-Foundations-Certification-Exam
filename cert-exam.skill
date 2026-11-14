@@ -1,9 +1,9 @@
 ---
 name: cert-exam
-description: Interactive Claude Certified Architect Foundations practice exam. Presents questions one by one using AskUserQuestion, tracks answers, and gives a final scaled score (100-1000, pass at 720).
+description: Interactive Claude Certified Architect Foundations practice exam. Runs a 60-question exam simulation (4 of 6 scenarios) or targeted drills using AskUserQuestion, tracks answers, and reports a per-domain readiness breakdown.
 context: fork
 allowed-tools: Read, AskUserQuestion
-argument-hint: "[number of questions, e.g. /cert-exam 20 — defaults to 20]"
+argument-hint: "[number of questions, e.g. /cert-exam 20 — omit for a full 60-question simulation]"
 ---
 
 # Claude Certified Architect Exam Runner
@@ -12,111 +12,124 @@ Run an interactive practice exam for the Claude Certified Architect – Foundati
 
 ## Step 1: Setup
 
-Read the full exam file: `Claude Certification/Claude Certification Exam.md`
+Read the full exam file. Try these paths in order and use the first that exists:
 
-Parse all questions from the file. Questions follow this pattern:
-- Start with `**Q[number].**`
-- Followed by scenario context and question stem
+1. `Claude Certification Exam.md`
+2. `Claude Certification/Claude Certification Exam.md`
+
+The file is organized by scenario. Parse it as follows:
+
+- `## Scenario N: Title` starts a scenario. The paragraph under it is the scenario description. Every question until the next `## ` heading belongs to that scenario.
+- Each question starts with `**Q[number].**`, followed by the stem (one or more paragraphs).
 - Then options `A) ... B) ... C) ... D) ...`
 - Then `**Correct Answer: X**`
-- Then explanation
+- Then a line `*Task D.T: ...*`. The first digit is the domain (1-5).
+- Then the explanation.
 
-Build an internal list: question number, scenario, stem, options A-D, correct answer letter, explanation.
-
-If the user provided an argument (e.g., `/cert-exam 20`), use that as the question count. Otherwise default to 20.
+Build an internal list: question number, scenario, domain, task, stem, options A-D, correct answer letter, explanation.
 
 ## Step 2: Configure the session
 
-Use ONE AskUserQuestion call with up to 3 questions:
+If the user passed a number as an argument, skip the Mode question and run a mixed drill of that many questions.
 
-**Question 1** — How many questions?
-- header: "Questions"
-- Options: "10 questions", "20 questions" (Recommended), "40 questions", "All 77"
+Otherwise use ONE AskUserQuestion call:
 
-**Question 2** — Domain focus?
-- header: "Domain"
-- Options: "All domains" (Recommended), "D1: Agentic Architecture", "D2: Tool Design & MCP", "D3: Claude Code Config"
-- (Note: If user picks D4 or D5, they can type it as Other)
+**Question 1** — Mode?
+- header: "Mode"
+- Options:
+  - "Exam simulation (Recommended)": 60 questions, 4 randomly chosen scenarios, 15 questions each, feedback only at the end
+  - "Quick drill": 20 questions mixed across all scenarios
+  - "Domain drill": every question from one domain
+  - "Scenario drill": every question from one scenario
 
-**Question 3** — Feedback mode?
+**Question 2** — Feedback?
 - header: "Feedback"
-- Options: "After each question" (Recommended), "Summary at the end only"
+- Options: "After each question", "Summary at the end only"
+- In exam simulation, recommend "Summary at the end only".
 
-Apply the user's choices to build the question queue:
-- If a domain is selected, filter to only questions in that domain (check the domain index in the exam file)
-- Randomly shuffle the filtered list
-- Take the first N questions per the count chosen
+If the user chose Domain drill or Scenario drill, ask one follow-up AskUserQuestion for which one. AskUserQuestion allows at most 4 options, so list the first four and tell the user to type the remaining choice (Domain 5, or Scenario 5 or 6) as Other.
+
+Build the question queue:
+
+- **Exam simulation:** pick 4 of the 6 scenarios at random. From each, pick 15 questions at random. Present the scenarios one after another, keeping each scenario's questions together.
+- **Quick drill / numeric argument:** shuffle all questions and take the first N.
+- **Domain drill / Scenario drill:** all matching questions, shuffled.
 
 ## Step 3: Run the exam
 
+When a new scenario begins, output its title and description once before its first question.
+
 For each question in the queue:
 
-1. Output a progress line: `**Question [current] of [total] | Score: [correct]/[answered so far]**`
+1. Output a progress line: `**Question [current] of [total]**`. In "After each question" mode, also show `Score: [correct]/[answered]`.
 
 2. Use AskUserQuestion with 1 question:
-   - `question`: Include the scenario context followed by the question stem. Format it as:
-     "[Scenario context]. [Question stem]?"
-     Keep it readable — trim to the most essential parts if very long.
-   - `header`: "Q[number]" (e.g., "Q13")
+   - `question`: the full stem, exactly as written. Do not shorten it and do not add hints.
+   - `header`: "Q[position in this session]" (e.g., "Q13")
    - `multiSelect`: false
-   - Options (4 options, A through D):
+   - Options (4 options, A through D, in the order they appear in the file):
      - label: "A", description: [full text of option A]
      - label: "B", description: [full text of option B]
      - label: "C", description: [full text of option C]
      - label: "D", description: [full text of option D]
 
-3. Record the user's answer. Compare to the correct answer letter.
+3. Record the user's answer and compare it to the correct answer letter. If the user answers with Other or skips, record it as incorrect.
 
 4. If feedback mode is "After each question":
-   - If correct: output `Correct.` then the explanation in brief (1-2 sentences).
-   - If incorrect: output `Incorrect. Correct answer: [X]` then the explanation (2-3 sentences max, focused on why the correct answer is right).
+   - If correct: output `Correct.` and the key reason in 1-2 sentences.
+   - If incorrect: output `Incorrect. Correct answer: [X]`, why it is right, and why the option the user chose is wrong (2-3 sentences).
 
-5. If feedback mode is "Summary at the end only": just acknowledge and move on with no answer reveal.
+5. If feedback mode is "Summary at the end only": acknowledge and move on with no answer reveal.
 
 6. Continue to the next question. Do not use AskUserQuestion between questions for anything other than the question itself.
 
-## Step 4: Final score
+## Step 4: Results
 
-After all questions are answered, calculate and display:
+After all questions are answered, display:
 
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    EXAM COMPLETE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Raw score:     [correct] / [total] ([percent]%)
-Scaled score:  [scaled] / 1000
-Pass mark:     720 / 1000 (~69% correct)
-
-Result:        PASS  /  FAIL
+Raw score:   [correct] / [total] ([percent]%)
+Readiness:   [READY | BORDERLINE | NOT YET]
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-Scaled score formula: `round(100 + (correct / total) * 900)`
+Readiness bands (a practice heuristic, not the official scale):
 
-Then show a domain breakdown:
+- **READY:** 85% or higher overall and no domain below 75%
+- **BORDERLINE:** 72-84% overall, or any domain below 75%
+- **NOT YET:** below 72% overall
+
+State once that the real exam is scored on a scaled 100-1,000 range with a 720 pass mark, that the raw-to-scaled conversion is not published, and that this result is therefore an estimate of readiness and not a predicted score.
+
+Then show the domain breakdown with the official exam weights:
+
 ```
 Domain breakdown:
-  D1 Agentic Architecture    [correct]/[total] ([%]%)
-  D2 Tool Design & MCP       [correct]/[total] ([%]%)
-  D3 Claude Code Config      [correct]/[total] ([%]%)
-  D4 Prompt Engineering      [correct]/[total] ([%]%)
-  D5 Context Management      [correct]/[total] ([%]%)
+  D1 Agentic Architecture (27%)    [correct]/[total] ([%]%)
+  D2 Tool Design & MCP (18%)       [correct]/[total] ([%]%)
+  D3 Claude Code Config (20%)      [correct]/[total] ([%]%)
+  D4 Prompt Engineering (20%)      [correct]/[total] ([%]%)
+  D5 Context Management (15%)      [correct]/[total] ([%]%)
 ```
 
-Then if feedback mode was "Summary at the end only", show all missed questions:
+Then list every missed question, in every feedback mode:
+
 ```
 Questions you missed:
-  Q[n]: Correct answer was [X]. [1-sentence explanation]
+  Q[file number] (Task [D.T]): you chose [Y], correct was [X]. [1-sentence explanation]
   ...
 ```
 
-End with a short note pointing to the weakest domain if any scored below 60%.
+End with the two or three task statements that had the most misses, and tell the user to review those sections in `Study Notes.md` before the next attempt.
 
 ## Rules
 
-- Never reveal the correct answer before the user selects an option.
-- Never skip or truncate questions mid-exam.
+- Never reveal the correct answer, the task statement, or the domain before the user selects an option.
+- Never skip, shorten, or reword questions or options.
 - If the exam file cannot be read, stop and report the error clearly.
 - Keep all output outside of AskUserQuestion calls clean and brief. This is an exam, not a conversation.
